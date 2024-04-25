@@ -20,44 +20,13 @@ using namespace std;
 // Map pentru stocarea IP-urilor si porturilor clientilor
 map<int, pair<in_addr, uint16_t>> client_ip_port;
 
-// Primeste date de pe connfd1 si trimite mesajul receptionat pe connfd2
-int receive_and_send(int connfd1, int connfd2, size_t len) {
-  int bytes_received;
-  char buffer[len];
+// Vector de pollfd pentru multiplexare
+struct pollfd poll_fds[MAX_CONNECTIONS];
 
-  // Primim exact len octeti de la connfd1
-  bytes_received = recv_all(connfd1, buffer, len);
-  // S-a inchis conexiunea
-  if (bytes_received == 0) {
-    return 0;
-  }
-  DIE(bytes_received < 0, "recv");
-
-  // Trimitem mesajul catre connfd2
-  int rc = send_all(connfd2, buffer, len);
-  if (rc <= 0) {
-    perror("send_all");
-    return -1;
-  }
-
-  return bytes_received;
-}
-
-void run_chat_multi_server(int listenfd) {
-  struct pollfd poll_fds[MAX_CONNECTIONS];
-  int num_sockets = 1;
-  int rc;
-
+void run_server(int num_sockets, int tcpfd, int udpfd) {
   struct chat_packet received_packet;
 
-  // Setam socket-ul listenfd pentru ascultare
-  rc = listen(listenfd, MAX_CONNECTIONS);
-  DIE(rc < 0, "listen");
-
-  // Adaugam noul file descriptor (socketul pe care se asculta conexiuni) in
-  // multimea poll_fds
-  poll_fds[0].fd = listenfd;
-  poll_fds[0].events = POLLIN;
+  int rc;
 
   while (1) {
     // Asteptam sa primim ceva pe unul dintre cei num_sockets socketi
@@ -66,13 +35,13 @@ void run_chat_multi_server(int listenfd) {
 
     for (int i = 0; i < num_sockets; i++) {
       if (poll_fds[i].revents & POLLIN) {
-        if (poll_fds[i].fd == listenfd) {
-          // Am primit o cerere de conexiune pe socketul de listen (de la un
+        if (poll_fds[i].fd == tcpfd) {
+          // Am primit o cerere de conexiune pe socketul tcp (de la un
           // nou client) pe care o acceptam
           struct sockaddr_in cli_addr;
           socklen_t cli_len = sizeof(cli_addr);
           const int newsockfd =
-              accept(listenfd, (struct sockaddr *)&cli_addr, &cli_len);
+              accept(tcpfd, (struct sockaddr *)&cli_addr, &cli_len);
           DIE(newsockfd < 0, "accept");
 
           // Retinem IP-ul si portul clientului nou
@@ -83,6 +52,33 @@ void run_chat_multi_server(int listenfd) {
           poll_fds[num_sockets].fd = newsockfd;
           poll_fds[num_sockets].events = POLLIN;
           num_sockets++;
+
+          // Conexiunea a fost efectuata, urmeaza sa primim ID-ul clientului
+        } else if (poll_fds[i].fd == udpfd) {
+        } else if (poll_fds[i].fd == STDIN_FILENO) {
+          char buf[MSG_MAXSIZE + 1];
+          fgets(buf, sizeof(buf), stdin);
+
+          // Parsam comanda, separand la spatii
+          int num_tokens = 0;
+          vector<string> tokens;
+          char *token = strtok(buf, " \n");
+          while (token != NULL) {
+            tokens.push_back(token);
+            token = strtok(NULL, " \n");
+            num_tokens++;
+          }
+
+          // Comanda de tip exit
+          if (num_tokens++ && tokens[0] == "exit") {
+            // Inchidem toate socketii
+            for (int j = 1; j < num_sockets; j++) {
+              close(poll_fds[j].fd);
+            }
+
+            return;
+          }
+
         } else {
           // Am primit date pe unul din socketii de client, asa ca le
           // receptionam
@@ -113,6 +109,7 @@ void run_chat_multi_server(int listenfd) {
             //   }
             // }
 
+            // Primul mesaj primit de la un client este ID-ul acestuia
             char *client_id = received_packet.message;
 
             printf("New client %s connected from %s:%d\n", client_id,
@@ -133,27 +130,25 @@ int main(int argc, char *argv[]) {
 
   setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
+  int rc;
+
   // Parsam port-ul ca un numar
   uint16_t port;
-  int rc = sscanf(argv[1], "%hu", &port);
+  rc = sscanf(argv[1], "%hu", &port);
   DIE(rc != 1, "Given port is invalid");
 
   // Obtinem un socket TCP pentru receptionarea conexiunilor
-  const int listenfd = socket(AF_INET, SOCK_STREAM, 0);
-  DIE(listenfd < 0, "socket");
+  const int tcpfd = socket(AF_INET, SOCK_STREAM, 0);
+  DIE(tcpfd < 0, "socket tcp");
+
+  // Obtinem un socket UDP pentru receptionarea mesajelor de transmis
+  const int udpfd = socket(AF_INET, SOCK_DGRAM, 0);
+  DIE(udpfd < 0, "socket udp");
 
   // Completăm in serv_addr adresa serverului, familia de adrese si portul
   // pentru conectare
   struct sockaddr_in serv_addr;
   socklen_t socket_len = sizeof(struct sockaddr_in);
-
-  // Facem adresa socket-ului reutilizabila, ca sa nu primim eroare in caz ca
-  // rulam de 2 ori rapid
-  // Vezi
-  // https://stackoverflow.com/questions/3229860/what-is-the-meaning-of-so-reuseaddr-setsockopt-option-linux
-  const int enable = 1;
-  if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
-    perror("setsockopt(SO_REUSEADDR) failed");
 
   memset(&serv_addr, 0, socket_len);
   serv_addr.sin_family = AF_INET;
@@ -161,13 +156,33 @@ int main(int argc, char *argv[]) {
   serv_addr.sin_addr.s_addr = INADDR_ANY;
 
   // Asociem adresa serverului cu socketul creat folosind bind
-  rc = bind(listenfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
-  DIE(rc < 0, "bind");
+  rc = bind(tcpfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
+  DIE(rc < 0, "bind tcp");
 
-  run_chat_multi_server(listenfd);
+  rc = bind(udpfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
+  DIE(rc < 0, "bind udp");
 
-  // Inchidem listenfd
-  close(listenfd);
+  // Adaugam socketii la multimea de descriptori
+  poll_fds[0].fd = tcpfd;
+  poll_fds[0].events = POLLIN;
+
+  poll_fds[1].fd = udpfd;
+  poll_fds[1].events = POLLIN;
+
+  poll_fds[2].fd = STDIN_FILENO;
+  poll_fds[2].events = POLLIN;
+
+  int num_sockets = 3;
+
+  // Setam socket-ul tcpfd pentru ascultare
+  rc = listen(tcpfd, MAX_CONNECTIONS);
+  DIE(rc < 0, "listen");
+
+  // Rulam serverul
+  run_server(num_sockets, tcpfd, udpfd);
+
+  // Inchidem socketul de listen
+  close(tcpfd);
 
   return 0;
 }
