@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <bits/stdc++.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -9,10 +10,15 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+using namespace std;
+
 #include "common.h"
 #include "helpers.h"
 
 #define MAX_CONNECTIONS 32
+
+// Map pentru stocarea IP-urilor si porturilor clientilor
+map<int, pair<in_addr, uint16_t>> client_ip_port;
 
 // Primeste date de pe connfd1 si trimite mesajul receptionat pe connfd2
 int receive_and_send(int connfd1, int connfd2, size_t len) {
@@ -61,22 +67,22 @@ void run_chat_multi_server(int listenfd) {
     for (int i = 0; i < num_sockets; i++) {
       if (poll_fds[i].revents & POLLIN) {
         if (poll_fds[i].fd == listenfd) {
-          // Am primit o cerere de conexiune pe socketul de listen, pe care
-          // o acceptam
+          // Am primit o cerere de conexiune pe socketul de listen (de la un
+          // nou client) pe care o acceptam
           struct sockaddr_in cli_addr;
           socklen_t cli_len = sizeof(cli_addr);
           const int newsockfd =
               accept(listenfd, (struct sockaddr *)&cli_addr, &cli_len);
           DIE(newsockfd < 0, "accept");
 
+          // Retinem IP-ul si portul clientului nou
+          client_ip_port[num_sockets] = {cli_addr.sin_addr, cli_addr.sin_port};
+
           // Adaugam noul socket intors de accept() la multimea descriptorilor
           // de citire
           poll_fds[num_sockets].fd = newsockfd;
           poll_fds[num_sockets].events = POLLIN;
           num_sockets++;
-
-          printf("New client %d connected from %s:%d\n", i,
-                 inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
         } else {
           // Am primit date pe unul din socketii de client, asa ca le
           // receptionam
@@ -95,16 +101,23 @@ void run_chat_multi_server(int listenfd) {
 
             num_sockets--;
           } else {
-            printf("S-a primit de la clientul de pe socketul %d mesajul: %s\n",
-                   poll_fds[i].fd, received_packet.message);
-            // Trimite mesajul catre toti ceilalti clienti
-            for (int j = 1; j < num_sockets; j++) {
-              if (poll_fds[j].fd != poll_fds[i].fd) {
-                rc = send_all(poll_fds[j].fd, &received_packet,
-                              sizeof(received_packet));
-                DIE(rc < 0, "send");
-              }
-            }
+            // printf("S-a primit de la clientul de pe socketul %d mesajul:
+            // %s\n",
+            //        poll_fds[i].fd, received_packet.message);
+            // // Trimite mesajul catre toti ceilalti clienti
+            // for (int j = 1; j < num_sockets; j++) {
+            //   if (poll_fds[j].fd != poll_fds[i].fd) {
+            //     rc = send_all(poll_fds[j].fd, &received_packet,
+            //                   sizeof(received_packet));
+            //     DIE(rc < 0, "send");
+            //   }
+            // }
+
+            char *client_id = received_packet.message;
+
+            printf("New client %s connected from %s:%d\n", client_id,
+                   inet_ntoa(client_ip_port[i].first),
+                   ntohs(client_ip_port[i].second));
           }
         }
       }
