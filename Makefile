@@ -3,11 +3,9 @@ CFLAGS = -Wall -g -Werror -Wno-error=unused-variable
 
 all: server subscriber
 
-# Compileaza server.cpp
 server: server.cpp common.cpp
 	$(CC) $(CFLAGS) -o $@ $^
 
-# Compileaza subscriber.cpp
 subscriber: subscriber.cpp common.cpp
 	$(CC) $(CFLAGS) -o $@ $^
 

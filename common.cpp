@@ -1,12 +1,11 @@
 #include "common.h"
 
+#include <bits/stdc++.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
-/*
-    TODO 1.1: Rescrieți funcția de mai jos astfel încât ea să facă primirea
-    a exact len octeți din buffer.
-*/
+using namespace std;
+
 int recv_all(int sockfd, void *buffer, size_t len) {
   size_t bytes_received = 0;
   size_t bytes_remaining = len;
@@ -27,11 +26,6 @@ int recv_all(int sockfd, void *buffer, size_t len) {
   return bytes_received;
 }
 
-/*
-    TODO 1.2: Rescrieți funcția de mai jos astfel încât ea să facă trimiterea
-    a exact len octeți din buffer.
-*/
-
 int send_all(int sockfd, void *buffer, size_t len) {
   size_t bytes_sent = 0;
   size_t bytes_remaining = len;
@@ -46,4 +40,14 @@ int send_all(int sockfd, void *buffer, size_t len) {
   }
 
   return bytes_sent;
+}
+
+vector<string> parse_cmd(char *buf) {
+  vector<string> tokens;
+  char *token = strtok(buf, " \n");
+  while (token != NULL) {
+    tokens.push_back(token);
+    token = strtok(NULL, " \n");
+  }
+  return tokens;
 }

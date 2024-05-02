@@ -17,11 +17,13 @@ using namespace std;
 
 #define MAX_CONNECTIONS 32
 
-// Map pentru stocarea IP-urilor si porturilor clientilor
-map<int, pair<in_addr, uint16_t>> client_ip_port;
+// Map topic: subscribers id list
+map<char *, vector<char *>> topic_subscribers;
+// Map id: subscriber
+map<char *, subscriber_t> id_subscriber;
 
-// Vector de pollfd pentru multiplexare
-struct pollfd poll_fds[MAX_CONNECTIONS];
+// Vector for polling file descriptors
+vector<pollfd> poll_fds(MAX_CONNECTIONS);
 
 void run_server(int num_sockets, int tcpfd, int udpfd) {
   struct chat_packet received_packet;
@@ -29,92 +31,109 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
   int rc;
 
   while (1) {
-    // Asteptam sa primim ceva pe unul dintre cei num_sockets socketi
-    rc = poll(poll_fds, num_sockets, -1);
+    // Wait for events on any of the sockets
+    rc = poll(&poll_fds[0], num_sockets, -1);
     DIE(rc < 0, "poll");
 
     for (int i = 0; i < num_sockets; i++) {
       if (poll_fds[i].revents & POLLIN) {
         if (poll_fds[i].fd == tcpfd) {
-          // Am primit o cerere de conexiune pe socketul tcp (de la un
-          // nou client) pe care o acceptam
+          // New TCP client connection
           struct sockaddr_in cli_addr;
           socklen_t cli_len = sizeof(cli_addr);
           const int newsockfd =
               accept(tcpfd, (struct sockaddr *)&cli_addr, &cli_len);
           DIE(newsockfd < 0, "accept");
 
-          // Retinem IP-ul si portul clientului nou
-          client_ip_port[num_sockets] = {cli_addr.sin_addr, cli_addr.sin_port};
+          // Add new subscriber to the list
+          struct subscriber_t new_subscriber;
+          new_subscriber.sockfd = newsockfd;
+          new_subscriber.ip = cli_addr.sin_addr.s_addr;
+          new_subscriber.port = cli_addr.sin_port;
+          new_subscriber.online = true;
 
-          // Adaugam noul socket intors de accept() la multimea descriptorilor
-          // de citire
+          int rc =
+              recv_all(newsockfd, &received_packet, sizeof(received_packet));
+          DIE(rc < 0, "recv");
+          char *sub_id = received_packet.source_id;
+
+          if (id_subscriber.find(sub_id) != id_subscriber.end() &&
+              id_subscriber[sub_id].online) {
+            printf("Client %s already connected.\n", sub_id);
+            close(newsockfd);
+            continue;
+          }
+
+          new_subscriber.id = sub_id;
+
+          // Add new subscriber to the list
+          id_subscriber[sub_id] = new_subscriber;
+
+          printf("New client %s connected from %d:%d\n", sub_id,
+                 id_subscriber[sub_id].ip, ntohs(id_subscriber[sub_id].port));
+
+          // Add new socket to the poll_fds vector
           poll_fds[num_sockets].fd = newsockfd;
           poll_fds[num_sockets].events = POLLIN;
           num_sockets++;
-
-          // Conexiunea a fost efectuata, urmeaza sa primim ID-ul clientului
         } else if (poll_fds[i].fd == udpfd) {
         } else if (poll_fds[i].fd == STDIN_FILENO) {
           char buf[MSG_MAXSIZE + 1];
           fgets(buf, sizeof(buf), stdin);
 
-          // Parsam comanda, separand la spatii
-          int num_tokens = 0;
-          vector<string> tokens;
-          char *token = strtok(buf, " \n");
-          while (token != NULL) {
-            tokens.push_back(token);
-            token = strtok(NULL, " \n");
-            num_tokens++;
-          }
+          // Parse the command, separating by spaces
+          vector<string> tokens = parse_cmd(buf);
 
-          // Comanda de tip exit
-          if (num_tokens++ && tokens[0] == "exit") {
-            // Inchidem toate socketii
-            for (int j = 1; j < num_sockets; j++) {
+          // If the command is "exit", close all sockets
+          if (tokens.size() == 1 && tokens[0] == "exit") {
+            for (int j = 0; j < num_sockets; j++) {
               close(poll_fds[j].fd);
             }
-
             return;
+          } else {
+            fprintf(stderr, "Invalid command\n");
           }
-
         } else {
-          // Am primit date pe unul din socketii de client, asa ca le
-          // receptionam
+          // Received a message from a subscriber
           int rc = recv_all(poll_fds[i].fd, &received_packet,
                             sizeof(received_packet));
           DIE(rc < 0, "recv");
 
-          if (rc == 0) {
-            printf("Client %d disconnected\n", i);
-            close(poll_fds[i].fd);
+          char *sub_id = NULL;
+          char *topic = NULL;
 
-            // Scoatem din multimea de citire socketul inchis
-            for (int j = i; j < num_sockets - 1; j++) {
-              poll_fds[j] = poll_fds[j + 1];
-            }
+          switch (received_packet.type) {
+            case SUBSCRIBE:
+              sub_id = received_packet.source_id;
+              topic = received_packet.message;
 
-            num_sockets--;
-          } else {
-            // printf("S-a primit de la clientul de pe socketul %d mesajul:
-            // %s\n",
-            //        poll_fds[i].fd, received_packet.message);
-            // // Trimite mesajul catre toti ceilalti clienti
-            // for (int j = 1; j < num_sockets; j++) {
-            //   if (poll_fds[j].fd != poll_fds[i].fd) {
-            //     rc = send_all(poll_fds[j].fd, &received_packet,
-            //                   sizeof(received_packet));
-            //     DIE(rc < 0, "send");
-            //   }
-            // }
+              // Add the subscriber to the list of subscribers for the topic
+              topic_subscribers[topic].push_back(sub_id);
+              break;
+            case UNSUBSCRIBE:
+              sub_id = received_packet.source_id;
+              topic = received_packet.message;
 
-            // Primul mesaj primit de la un client este ID-ul acestuia
-            char *client_id = received_packet.message;
+              // Remove the subscriber from the list of subscribers for the
+              // topic
+              topic_subscribers[topic].erase(
+                  remove(topic_subscribers[topic].begin(),
+                         topic_subscribers[topic].end(), sub_id),
+                  topic_subscribers[topic].end());
+              break;
+            case DISCONNECT:
+              char *sub_id = received_packet.source_id;
+              printf("Client %s disconnected.\n", sub_id);
+              close(poll_fds[i].fd);
 
-            printf("New client %s connected from %s:%d\n", client_id,
-                   inet_ntoa(client_ip_port[i].first),
-                   ntohs(client_ip_port[i].second));
+              // Remove fd from poll_fds
+              poll_fds.erase(poll_fds.begin() + i);
+
+              // Update the subscriber status
+              id_subscriber[sub_id].online = false;
+
+              num_sockets--;
+              break;
           }
         }
       }
@@ -124,7 +143,7 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
-    printf("\n Usage: %s <PORT_SERVER>\n", argv[0]);
+    fprintf(stderr, "\n Usage: %s <PORT_SERVER>\n", argv[0]);
     return 1;
   }
 
@@ -132,56 +151,48 @@ int main(int argc, char *argv[]) {
 
   int rc;
 
-  // Parsam port-ul ca un numar
+  // Parse port as number
   uint16_t port;
   rc = sscanf(argv[1], "%hu", &port);
   DIE(rc != 1, "Given port is invalid");
 
-  // Obtinem un socket TCP pentru receptionarea conexiunilor
+  // Get TCP socket for communication with subscribers
   const int tcpfd = socket(AF_INET, SOCK_STREAM, 0);
-  DIE(tcpfd < 0, "socket tcp");
+  DIE(tcpfd < 0, "Socket TCP failed");
 
-  // Obtinem un socket UDP pentru receptionarea mesajelor de transmis
+  // Get UDP socket for receiving messages to send further
   const int udpfd = socket(AF_INET, SOCK_DGRAM, 0);
-  DIE(udpfd < 0, "socket udp");
+  DIE(udpfd < 0, "Socket UDP failed");
 
-  // Completăm in serv_addr adresa serverului, familia de adrese si portul
-  // pentru conectare
+  // Save the server address, address family and port for connection
   struct sockaddr_in serv_addr;
   socklen_t socket_len = sizeof(struct sockaddr_in);
-
   memset(&serv_addr, 0, socket_len);
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_port = htons(port);
   serv_addr.sin_addr.s_addr = INADDR_ANY;
 
-  // Asociem adresa serverului cu socketul creat folosind bind
+  // Bind the server address to the sockets
   rc = bind(tcpfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
   DIE(rc < 0, "bind tcp");
-
   rc = bind(udpfd, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
   DIE(rc < 0, "bind udp");
 
-  // Adaugam socketii la multimea de descriptori
-  poll_fds[0].fd = tcpfd;
-  poll_fds[0].events = POLLIN;
+  // Add the sockets to the poll_fds vector
+  poll_fds.push_back({tcpfd, POLLIN, 0});
+  poll_fds.push_back({udpfd, POLLIN, 0});
+  poll_fds.push_back({STDIN_FILENO, POLLIN, 0});
 
-  poll_fds[1].fd = udpfd;
-  poll_fds[1].events = POLLIN;
+  int num_sockets = poll_fds.size();
 
-  poll_fds[2].fd = STDIN_FILENO;
-  poll_fds[2].events = POLLIN;
-
-  int num_sockets = 3;
-
-  // Setam socket-ul tcpfd pentru ascultare
+  // tcpfd for listening
   rc = listen(tcpfd, MAX_CONNECTIONS);
   DIE(rc < 0, "listen");
 
-  // Rulam serverul
+  // Run the server
   run_server(num_sockets, tcpfd, udpfd);
 
-  // Inchidem socketul de listen
+  // Close the socket
   close(tcpfd);
 
   return 0;
