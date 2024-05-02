@@ -17,10 +17,16 @@ using namespace std;
 
 #define MAX_CONNECTIONS 32
 
+struct cmp_str {
+  bool operator()(char const *a, char const *b) const {
+    return std::strcmp(a, b) < 0;
+  }
+};
+
 // Map topic: subscribers id list
-map<char *, vector<char *>> topic_subscribers;
+map<char *, vector<char *>, cmp_str> topic_subscribers;
 // Map id: subscriber
-map<char *, subscriber_t> id_subscriber;
+map<char *, subscriber_t, cmp_str> id_subscriber;
 
 // Vector for polling file descriptors
 vector<pollfd> poll_fds(MAX_CONNECTIONS);
@@ -55,7 +61,9 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
           int rc =
               recv_all(newsockfd, &received_packet, sizeof(received_packet));
           DIE(rc < 0, "recv");
-          char *sub_id = received_packet.source_id;
+
+          char *sub_id = (char *)malloc(MAX_ID);
+          strcpy(sub_id, received_packet.source_id);
 
           if (id_subscriber.find(sub_id) != id_subscriber.end() &&
               id_subscriber[sub_id].online) {
@@ -89,6 +97,11 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
             for (int j = 0; j < num_sockets; j++) {
               close(poll_fds[j].fd);
             }
+
+            for (auto &id : id_subscriber) {
+              free(id.first);
+            }
+
             return;
           } else {
             fprintf(stderr, "Invalid command\n");
