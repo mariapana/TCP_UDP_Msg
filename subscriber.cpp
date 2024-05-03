@@ -24,7 +24,8 @@ void run_subscriber(int sockfd, char *sub_id) {
   request.len = 0;
   strcpy(request.source_id, sub_id);
   request.type = CONNECT;
-  send_all(sockfd, &request, sizeof(request));
+  int rc = send_all(sockfd, &request, sizeof(request));
+  DIE(rc <= 0, "send_all");
 
   // Multiplexing input from stdin and messages from server
   struct pollfd fds[2];
@@ -44,7 +45,7 @@ void run_subscriber(int sockfd, char *sub_id) {
   struct chat_packet recv_packet;
 
   while (1) {
-    int rc = poll(fds, 2, -1);
+    rc = poll(fds, 2, -1);
 
     if (rc < 0) {
       perror("poll");
@@ -64,7 +65,8 @@ void run_subscriber(int sockfd, char *sub_id) {
         memset(sent_packet.message, 0, MSG_MAXSIZE);
         sent_packet.type = DISCONNECT;
         strcpy(sent_packet.source_id, sub_id);
-        send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        rc = send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        DIE(rc <= 0, "send_all");
         return;
       }
 
@@ -74,7 +76,8 @@ void run_subscriber(int sockfd, char *sub_id) {
         sent_packet.type = SUBSCRIBE;
         strcpy(sent_packet.source_id, sub_id);
         strcpy(sent_packet.message, tokens[1].c_str());
-        send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        rc = send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        DIE(rc <= 0, "send_all");
         printf("Subscribed to topic %s\n", tokens[1].c_str());
       } else if (tokens[0] == "unsubscribe") {
         // If the command is "unsubscribe", send an unsubscribe message to the
@@ -82,7 +85,8 @@ void run_subscriber(int sockfd, char *sub_id) {
         sent_packet.type = UNSUBSCRIBE;
         strcpy(sent_packet.source_id, sub_id);
         strcpy(sent_packet.message, tokens[1].c_str());
-        send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        rc = send_all(sockfd, &sent_packet, sizeof(sent_packet));
+        DIE(rc <= 0, "send_all");
         printf("Unsubscribed from topic %s\n", tokens[1].c_str());
       } else {
         fprintf(stderr, "Invalid command\n");
