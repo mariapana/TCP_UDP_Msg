@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>  // TCP_NODELAY
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -117,6 +118,15 @@ int main(int argc, char *argv[]) {
   // Get the socket to communicate with the server
   const int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   DIE(sockfd < 0, "socket");
+
+  // Enable the socket to reuse the address
+  const int enable = 1;
+  rc = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+  DIE(rc < 0, "setsockopt SOL_SOCKET");
+
+  // Disable Nagle's algorithm
+  rc = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+  DIE(rc < 0, "setsockopt IPPROTO_TCP");
 
   // Save the server address, address family and port for connection
   struct sockaddr_in serv_addr;

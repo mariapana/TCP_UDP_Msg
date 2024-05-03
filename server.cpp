@@ -2,6 +2,7 @@
 #include <bits/stdc++.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>  // TCP_NODELAY
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +51,17 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
           const int newsockfd =
               accept(tcpfd, (struct sockaddr *)&cli_addr, &cli_len);
           DIE(newsockfd < 0, "accept");
+
+          // Enable the socket to reuse the address
+          const int enable = 1;
+          rc = setsockopt(newsockfd, SOL_SOCKET, SO_REUSEADDR, &enable,
+                          sizeof(int));
+          DIE(rc < 0, "setsockopt SOL_SOCKET");
+
+          // Disable Nagle's algorithm
+          rc = setsockopt(newsockfd, IPPROTO_TCP, TCP_NODELAY, &enable,
+                          sizeof(int));
+          DIE(rc < 0, "setsockopt IPPROTO_TCP");
 
           // Add new subscriber to the list
           struct subscriber_t new_subscriber;
