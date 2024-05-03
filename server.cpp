@@ -16,8 +16,7 @@ using namespace std;
 #include "common.h"
 #include "helpers.h"
 
-#define MAX_CONNECTIONS 32
-
+// Compare function for the map
 struct cmp_str {
   bool operator()(char const *a, char const *b) const {
     return std::strcmp(a, b) < 0;
@@ -30,7 +29,7 @@ map<char *, vector<char *>, cmp_str> topic_subscribers;
 map<char *, subscriber_t, cmp_str> id_subscriber;
 
 // Vector for polling file descriptors
-vector<pollfd> poll_fds(MAX_CONNECTIONS);
+vector<pollfd> poll_fds;
 
 void run_server(int num_sockets, int tcpfd, int udpfd) {
   struct chat_packet received_packet;
@@ -93,8 +92,7 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
                  id_subscriber[sub_id].ip, ntohs(id_subscriber[sub_id].port));
 
           // Add new socket to the poll_fds vector
-          poll_fds[num_sockets].fd = newsockfd;
-          poll_fds[num_sockets].events = POLLIN;
+          poll_fds.push_back({newsockfd, POLLIN, 0});
           num_sockets++;
         } else if (poll_fds[i].fd == udpfd) {
         } else if (poll_fds[i].fd == STDIN_FILENO) {
@@ -211,7 +209,7 @@ int main(int argc, char *argv[]) {
   int num_sockets = poll_fds.size();
 
   // tcpfd for listening
-  rc = listen(tcpfd, MAX_CONNECTIONS);
+  rc = listen(tcpfd, INT_MAX);
   DIE(rc < 0, "listen");
 
   // Run the server
