@@ -43,7 +43,7 @@ int send_all(int sockfd, void *buffer, size_t len) {
 }
 
 vector<string> parse_cmd(char *buf) {
-  vector<string> tokens;
+  vector<string> tokens = {};
   char *token = strtok(buf, " \n");
   while (token != NULL) {
     tokens.push_back(token);

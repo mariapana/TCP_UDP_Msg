@@ -18,6 +18,8 @@ using namespace std;
 #include "common.h"
 #include "helpers.h"
 
+// UDP message parsing functions
+
 string get_int_msg(char *buffer, char *topic) {
   // Move to the next byte after reading the sign
   int8_t sign = *buffer++;
@@ -25,7 +27,6 @@ string get_int_msg(char *buffer, char *topic) {
   // Convert from network to host byte order and assign
   int64_t number = ntohl(*(uint32_t *)buffer);
 
-  // Apply sign
   if (sign) number = -number;
 
   string msg = "";
@@ -37,13 +38,16 @@ string get_int_msg(char *buffer, char *topic) {
   return msg;
 }
 
+// Found out ostringstreams are pretty cool <3
+// https://stackoverflow.com/questions/2342162/stdstring-formatting-like-sprintf
+// https://stackoverflow.com/questions/40470222/what-is-the-point-of-using-ostringstream-instead-of-just-using-a-regular-string
 string get_short_real_msg(char *buffer, char *topic) {
-  // Convert, scale, and round to two decimal places
+  // Convert, scale and round to two decimal places
   float number = roundf(ntohs(*(uint16_t *)buffer) * 100.0f) / 10000.0f;
 
-  std::ostringstream msg_stream;
-  msg_stream << topic << " - SHORT_REAL - " << std::fixed
-             << std::setprecision(2) << number << "\n";
+  ostringstream msg_stream;
+  msg_stream << topic << " - SHORT_REAL - " << fixed << setprecision(2)
+             << number << "\n";
 
   return msg_stream.str();
 }
@@ -56,20 +60,17 @@ string get_float_msg(char *buffer, char *topic) {
   float number = ntohl(*(uint32_t *)buffer);
   buffer += sizeof(uint32_t);
 
-  // Apply sign
   if (sign) number = -number;
 
-  // Read the exponent for scaling
+  // Read the exponent
   int8_t exponent = *buffer;
   number = number / pow(10, exponent);
 
-  string msg = "";
-  msg.append(topic);
-  msg.append(" - FLOAT - ");
-  msg.append(to_string(number));
-  msg.append("\n");
+  ostringstream msg_stream;
+  msg_stream.precision(4);
+  msg_stream << topic << " - FLOAT - " << fixed << number << "\n";
 
-  return msg;
+  return msg_stream.str();
 }
 
 string get_string_msg(char *buffer, char *topic) {

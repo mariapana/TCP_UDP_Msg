@@ -22,7 +22,7 @@ vector<string> parse_cmd(char *buf);
 
 // Maximum UDP message size
 #define MAX_UDP_MSG_SIZE 1551
-#define BUFF 1570
+#define BUFF 1561
 
 // IP length
 #define IP_LEN 16

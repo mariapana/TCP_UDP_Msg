@@ -24,6 +24,18 @@ map<string, subscriber_t> id_subscriber;
 // Vector for polling file descriptors
 vector<pollfd> poll_fds;
 
+// Use regex to see if the received topic matches the subscribed topic family
+// https://www.ibm.com/docs/en/informix-servers/12.10?topic=matching-regex-routines
+bool topic_matches(const string &subscribed_topic,
+                   const string &received_topic) {
+  string regex_pattern =
+      "^" +
+      regex_replace(regex_replace(subscribed_topic, regex("\\+"), "[^/]+"),
+                    regex("\\*"), ".*") +
+      "$";
+  return regex_match(received_topic, regex(regex_pattern));
+}
+
 void run_server(int num_sockets, int tcpfd, int udpfd) {
   struct chat_packet rcv_pkt;
 
@@ -111,28 +123,36 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
           msg->port = ((struct sockaddr_in *)&udp_cli_addr)->sin_port;
 
           // Get topic
-          char topic[MAX_TOPIC_LEN + 1];
+          char topic[MAX_TOPIC_LEN + 1] = {0};
           memcpy(topic, buffer, MAX_TOPIC_LEN);
-          topic[MAX_TOPIC_LEN + 1] = '\0';
 
-          // Get subscribers list for the topic
-          vector<string> subscribed_clients = {};
-          subscribed_clients = topic_subscribers[topic];
+          // Keep track of already notified subscribers for this message
+          unordered_set<string> notified_subscribers;
 
-          for (string sub_id : subscribed_clients) {
-            if (id_subscriber[sub_id].online) {
-              rc = send_all(id_subscriber[sub_id].sockfd, &msg->ip,
-                            sizeof(msg->ip));
-              DIE(rc < 0, "send");
-              rc = send_all(id_subscriber[sub_id].sockfd, &msg->port,
-                            sizeof(msg->port));
-              DIE(rc < 0, "send");
-              rc = send_all(id_subscriber[sub_id].sockfd, &msg->len,
-                            sizeof(msg->len));
-              DIE(rc < 0, "send");
-              rc = send_all(id_subscriber[sub_id].sockfd, msg->message,
-                            msg->len);
-              DIE(rc < 0, "send");
+          for (auto &[subscribed_topic, subscribers] : topic_subscribers) {
+            if (!subscribers.size()) continue;
+            if (topic_matches(subscribed_topic, topic)) {
+              for (string sub_id : subscribers) {
+                if (id_subscriber[sub_id].online &&
+                    notified_subscribers.find(sub_id) ==
+                        notified_subscribers.end()) {
+                  rc = send_all(id_subscriber[sub_id].sockfd, &msg->ip,
+                                sizeof(msg->ip));
+                  DIE(rc < 0, "send");
+                  rc = send_all(id_subscriber[sub_id].sockfd, &msg->port,
+                                sizeof(msg->port));
+                  DIE(rc < 0, "send");
+                  rc = send_all(id_subscriber[sub_id].sockfd, &msg->len,
+                                sizeof(msg->len));
+                  DIE(rc < 0, "send");
+                  rc = send_all(id_subscriber[sub_id].sockfd, msg->message,
+                                msg->len);
+                  DIE(rc < 0, "send");
+
+                  // Add subscriber to the list of notified subscribers
+                  notified_subscribers.insert(sub_id);
+                }
+              }
             }
           }
         } else if (poll_fds[i].fd == STDIN_FILENO) {
@@ -185,7 +205,6 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
             case DISCONNECT: {
               char *sub_id = rcv_pkt.source_id;
               printf("Client %s disconnected.\n", sub_id);
-              close(poll_fds[i].fd);
 
               // Remove fd from poll_fds
               poll_fds.erase(poll_fds.begin() + i);
@@ -194,6 +213,7 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
               id_subscriber[sub_id].online = false;
 
               num_sockets--;
+              close(poll_fds[i].fd);
               break;
             }
           }
