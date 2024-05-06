@@ -17,11 +17,27 @@ vector<string> parse_cmd(char *buf);
 // Maximum ID size
 #define MAX_ID 10
 
-// Message types
+// Maximum topic length
+#define MAX_TOPIC_LEN 50
+
+// Maximum UDP message size
+#define MAX_UDP_MSG_SIZE 1551
+#define BUFF 1566
+
+// IP length
+#define IP_LEN 16
+
+// TCP message types
 #define CONNECT 1
 #define SUBSCRIBE 2
 #define UNSUBSCRIBE 3
 #define DISCONNECT 4
+
+// UDP message types
+#define INT 0
+#define SHORT_REAL 1
+#define FLOAT 2
+#define STRING 3
 
 // Packet structure
 struct chat_packet {
@@ -31,7 +47,7 @@ struct chat_packet {
   char message[MSG_MAXSIZE + 1];
 };
 
-// subscriber structure
+// Subscriber structure
 struct subscriber_t {
   int sockfd;
   char *id;
@@ -39,5 +55,20 @@ struct subscriber_t {
   uint16_t port;
   uint32_t ip;
 };
+
+// UDP message structure
+struct udp_msg_t {
+  char topic[50];
+  char type;
+  char msg_content[1500];
+};
+
+// Message structure
+struct message_t {
+  int len;
+  char *message;
+  char ip[IP_LEN];
+  uint16_t port;
+} __attribute__((packed));
 
 #endif

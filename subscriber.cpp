@@ -18,6 +18,70 @@ using namespace std;
 #include "common.h"
 #include "helpers.h"
 
+string get_int_msg(char *buffer, char *topic) {
+  // Move to the next byte after reading the sign
+  int8_t sign = *buffer++;
+
+  // Convert from network to host byte order and assign
+  int64_t number = ntohl(*(uint32_t *)buffer);
+
+  // Apply sign
+  if (sign) number = -number;
+
+  string msg = "";
+  msg.append(topic);
+  msg.append(" - INT - ");
+  msg.append(to_string(number));
+  msg.append("\n");
+
+  return msg;
+}
+
+string get_short_real_msg(char *buffer, char *topic) {
+  // Convert, scale, and round to two decimal places
+  float number = roundf(ntohs(*(uint16_t *)buffer) * 100.0f) / 10000.0f;
+
+  std::ostringstream msg_stream;
+  msg_stream << topic << " - SHORT_REAL - " << std::fixed
+             << std::setprecision(2) << number << "\n";
+
+  return msg_stream.str();
+}
+
+string get_float_msg(char *buffer, char *topic) {
+  // Read sign and move buffer forward
+  int8_t sign = *buffer++;
+
+  // Convert the next 4 bytes and adjust pointer
+  float number = ntohl(*(uint32_t *)buffer);
+  buffer += sizeof(uint32_t);
+
+  // Apply sign
+  if (sign) number = -number;
+
+  // Read the exponent for scaling
+  int8_t exponent = *buffer;
+  number = number / pow(10, exponent);
+
+  string msg = "";
+  msg.append(topic);
+  msg.append(" - FLOAT - ");
+  msg.append(to_string(number));
+  msg.append("\n");
+
+  return msg;
+}
+
+string get_string_msg(char *buffer, char *topic) {
+  string msg = "";
+  msg.append(topic);
+  msg.append(" - STRING - ");
+  msg.append(buffer);
+  msg.append("\n");
+
+  return msg;
+}
+
 void run_subscriber(int sockfd, char *sub_id) {
   // Send the subscriber ID to the server
   struct chat_packet request;
@@ -42,7 +106,6 @@ void run_subscriber(int sockfd, char *sub_id) {
   memset(buf, 0, MSG_MAXSIZE + 1);
 
   struct chat_packet sent_packet;
-  struct chat_packet recv_packet;
 
   while (1) {
     rc = poll(fds, 2, -1);
@@ -95,10 +158,55 @@ void run_subscriber(int sockfd, char *sub_id) {
 
     // Check for messages from server
     if (fds[1].revents & POLLIN) {
-      int rc = recv_all(sockfd, &recv_packet, sizeof(recv_packet));
-      if (rc <= 0) break;
+      //  Read IP and port
+      char ip[IP_LEN];
+      uint16_t port;
 
-      printf("%s\n", recv_packet.message);
+      int rc = recv_all(sockfd, &ip, sizeof(ip));
+      DIE(rc <= 0, "recv_all");
+
+      rc = recv_all(sockfd, &port, sizeof(port));
+      DIE(rc <= 0, "recv_all");
+
+      printf("%s:%d - ", ip, port);
+
+      // Read message length and message
+      int len;
+      char buffer[BUFF];
+      memset(buffer, 0, sizeof(buffer));
+
+      rc = recv_all(sockfd, &len, sizeof(len));
+      if (!rc) return;
+
+      recv_all(sockfd, buffer, len);
+
+      // Get topic
+      char topic[MAX_TOPIC_LEN + 1];
+      memset(topic, 0, sizeof(topic));
+      memcpy(topic, buffer, MAX_TOPIC_LEN);
+      char *buff = buffer;
+      buff += MAX_TOPIC_LEN;
+
+      // Get type
+      char type = *buff;
+      buff++;
+
+      switch (type) {
+        case INT:
+          cout << get_int_msg(buff, topic);
+          break;
+        case SHORT_REAL:
+          cout << get_short_real_msg(buff, topic);
+          break;
+        case FLOAT:
+          cout << get_float_msg(buff, topic);
+          break;
+        case STRING:
+          cout << get_string_msg(buff, topic);
+          break;
+        default:
+          break;
+      }
     }
   }
 }
