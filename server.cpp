@@ -159,9 +159,9 @@ void run_server(int num_sockets, int tcpfd, int udpfd) {
 
           switch (rcv_pkt.type) {
             case SUBSCRIBE: {
-              char sub_id[10] = {0};
+              char sub_id[MAX_ID] = {0};
               strcpy(sub_id, rcv_pkt.source_id);
-              char topic[50] = {0};
+              char topic[MAX_TOPIC_LEN] = {0};
               strcpy(topic, rcv_pkt.message);
 
               // Add the subscriber to the list of subscribers for the topic
